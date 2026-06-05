@@ -326,6 +326,17 @@
       max-height: none;
     }
 
+    @media (max-width: 760px) {
+      .lightbox-viewport.is-touch-zoomed {
+        cursor: grab;
+      }
+
+      .lightbox-viewport.is-touch-zoomed img {
+        width: calc(var(--touch-zoom, 1) * 100%);
+        max-height: none;
+      }
+    }
+
     @media (max-width: 980px) {
       .masonry {
         column-count: 3;
@@ -449,6 +460,12 @@
     let isReversed = false;
     let isFullSize = false;
     let dragStart = null;
+    let touchZoom = 1;
+    let pinchStart = null;
+    const activeTouches = new Map();
+    const mobilePreviewQuery = window.matchMedia("(max-width: 760px)");
+    const minTouchZoom = 1;
+    const maxTouchZoom = 4;
 
     function source(work) {
       return work.image;
@@ -472,12 +489,80 @@
       }
     }
 
+    function clamp(value, min, max) {
+      return Math.min(Math.max(value, min), max);
+    }
+
+    function setTouchZoom(nextZoom, anchor = null) {
+      const previousZoom = touchZoom;
+      touchZoom = clamp(nextZoom, minTouchZoom, maxTouchZoom);
+      if (Math.abs(touchZoom - minTouchZoom) < 0.03) touchZoom = minTouchZoom;
+
+      lightboxViewport.classList.toggle("is-touch-zoomed", touchZoom > minTouchZoom);
+      lightboxViewport.style.setProperty("--touch-zoom", touchZoom);
+
+      if (touchZoom === minTouchZoom) {
+        lightboxViewport.scrollTo({ top: 0, left: 0 });
+        return;
+      }
+
+      if (anchor) {
+        const ratio = touchZoom / previousZoom;
+        lightboxViewport.scrollLeft = (lightboxViewport.scrollLeft + anchor.x) * ratio - anchor.x;
+        lightboxViewport.scrollTop = (lightboxViewport.scrollTop + anchor.y) * ratio - anchor.y;
+      }
+    }
+
     function resetViewMode() {
       setFullSize(false);
+      setTouchZoom(minTouchZoom);
+      activeTouches.clear();
+      pinchStart = null;
+      dragStart = null;
     }
 
     function toggleFullSize() {
       setFullSize(!isFullSize);
+    }
+
+    function isTouchZoomAvailable() {
+      return mobilePreviewQuery.matches && lightbox.classList.contains("is-open");
+    }
+
+    function touchPointDistance(first, second) {
+      return Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
+    }
+
+    function touchPointMidpoint(first, second) {
+      const rect = lightboxViewport.getBoundingClientRect();
+      return {
+        x: (first.clientX + second.clientX) / 2 - rect.left,
+        y: (first.clientY + second.clientY) / 2 - rect.top
+      };
+    }
+
+    function startPinch() {
+      const points = [...activeTouches.values()];
+      if (!isTouchZoomAvailable() || points.length < 2) return;
+      pinchStart = {
+        distance: touchPointDistance(points[0], points[1]),
+        zoom: touchZoom
+      };
+      dragStart = null;
+      lightboxViewport.classList.remove("is-dragging");
+    }
+
+    function endPointerInteraction(event) {
+      activeTouches.delete(event.pointerId);
+      if (activeTouches.size >= 2) {
+        startPinch();
+      } else {
+        pinchStart = null;
+      }
+
+      if (!dragStart || dragStart.pointerId !== event.pointerId) return;
+      dragStart = null;
+      lightboxViewport.classList.remove("is-dragging");
     }
 
     function openLightbox(work, index) {
@@ -501,12 +586,18 @@
       const figure = document.createElement("figure");
       figure.className = "shot";
       figure.tabIndex = 0;
-      figure.innerHTML = `
-        <img loading="lazy" src="${source(work)}" alt="${label(work, index)}">
-        <figcaption>
-          <span>${label(work, index)}</span>
-        </figcaption>
-      `;
+
+      const image = document.createElement("img");
+      image.loading = "lazy";
+      image.src = source(work);
+      image.alt = label(work, index);
+
+      const caption = document.createElement("figcaption");
+      const captionText = document.createElement("span");
+      captionText.textContent = label(work, index);
+      caption.append(captionText);
+
+      figure.append(image, caption);
       figure.addEventListener("click", () => openLightbox(work, index));
       figure.addEventListener("keydown", (event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -561,9 +652,30 @@
       setFullSize(event.deltaY < 0);
     }, { passive: false });
     lightboxViewport.addEventListener("pointerdown", (event) => {
-      if (!isFullSize) return;
+      if (event.pointerType === "touch" && isTouchZoomAvailable()) {
+        activeTouches.set(event.pointerId, event);
+        lightboxViewport.setPointerCapture(event.pointerId);
+        if (activeTouches.size >= 2) {
+          event.preventDefault();
+          startPinch();
+        } else if (touchZoom > minTouchZoom) {
+          event.preventDefault();
+          dragStart = {
+            pointerId: event.pointerId,
+            x: event.clientX,
+            y: event.clientY,
+            left: lightboxViewport.scrollLeft,
+            top: lightboxViewport.scrollTop
+          };
+          lightboxViewport.classList.add("is-dragging");
+        }
+        return;
+      }
+
+      if (!isFullSize && touchZoom === minTouchZoom) return;
       event.preventDefault();
       dragStart = {
+        pointerId: event.pointerId,
         x: event.clientX,
         y: event.clientY,
         left: lightboxViewport.scrollLeft,
@@ -573,21 +685,33 @@
       lightboxViewport.setPointerCapture(event.pointerId);
     });
     lightboxViewport.addEventListener("pointermove", (event) => {
+      if (event.pointerType === "touch" && activeTouches.has(event.pointerId)) {
+        activeTouches.set(event.pointerId, event);
+        if (pinchStart && activeTouches.size >= 2) {
+          event.preventDefault();
+          const points = [...activeTouches.values()];
+          const distance = touchPointDistance(points[0], points[1]);
+          if (pinchStart.distance > 0) {
+            const midpoint = touchPointMidpoint(points[0], points[1]);
+            setTouchZoom(pinchStart.zoom * (distance / pinchStart.distance), midpoint);
+          }
+        }
+        if (!dragStart || dragStart.pointerId !== event.pointerId) return;
+      }
+
       if (!dragStart) return;
       event.preventDefault();
       lightboxViewport.scrollLeft = dragStart.left - (event.clientX - dragStart.x);
       lightboxViewport.scrollTop = dragStart.top - (event.clientY - dragStart.y);
     });
     lightboxViewport.addEventListener("pointerup", (event) => {
-      dragStart = null;
-      lightboxViewport.classList.remove("is-dragging");
+      endPointerInteraction(event);
       if (lightboxViewport.hasPointerCapture(event.pointerId)) {
         lightboxViewport.releasePointerCapture(event.pointerId);
       }
     });
     lightboxViewport.addEventListener("pointercancel", (event) => {
-      dragStart = null;
-      lightboxViewport.classList.remove("is-dragging");
+      endPointerInteraction(event);
       if (lightboxViewport.hasPointerCapture(event.pointerId)) {
         lightboxViewport.releasePointerCapture(event.pointerId);
       }
