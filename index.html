@@ -406,7 +406,7 @@
           <button class="sort-toggle" type="button" id="sort-toggle" aria-label="切換為倒序排列" aria-pressed="false">
             <span class="sort-toggle-mark" aria-hidden="true">↑</span>
           </button>
-          <div class="stat" aria-label="作品數量"><strong id="count">57</strong><span>作品分享</span></div>
+          <div class="stat" aria-label="作品數量"><strong id="count">0</strong><span>作品分享</span></div>
         </div>
       </div>
     </header>
@@ -436,66 +436,6 @@
   </div>
 
   <script>
-    const files = [
-      "IMG_1334.JPG",
-      "IMG_1335.JPG",
-      "IMG_1336.JPG",
-      "IMG_1338.JPG",
-      "IMG_1340.JPG",
-      "IMG_1341.JPG",
-      "IMG_1342-2.jpg",
-      "IMG_1342.JPG",
-      "IMG_1345.JPG",
-      "IMG_1346.JPG",
-      "IMG_1347.JPG",
-      "IMG_1348.JPG",
-      "IMG_1349.JPG",
-      "IMG_1350.JPG",
-      "IMG_1351.JPG",
-      "IMG_1353.JPG",
-      "IMG_1354.JPG",
-      "IMG_1355.JPG",
-      "IMG_1356.JPG",
-      "IMG_1357.JPG",
-      "IMG_1358.JPG",
-      "IMG_1359.JPG",
-      "IMG_1360.JPG",
-      "IMG_1361.JPG",
-      "IMG_1362.JPG",
-      "IMG_1363.JPG",
-      "IMG_1364.JPG",
-      "IMG_1368.JPG",
-      "IMG_1369.JPG",
-      "IMG_1371.JPG",
-      "IMG_1373.JPG",
-      "IMG_1374.JPG",
-      "IMG_1377.JPG",
-      "IMG_1378.JPG",
-      "IMG_1379.JPG",
-      "IMG_1380.JPG",
-      "IMG_1384.JPG",
-      "IMG_1385.JPG",
-      "IMG_1386.JPG",
-      "IMG_1387.JPG",
-      "IMG_1388.JPG",
-      "IMG_1390.JPG",
-      "IMG_1392.JPG",
-      "IMG_1393.JPG",
-      "IMG_1398.JPG",
-      "IMG_1399.JPG",
-      "IMG_1400.JPG",
-      "IMG_1401.JPG",
-      "IMG_1402.JPG",
-      "IMG_1404.JPG",
-      "IMG_1405.JPG",
-      "IMG_1406.JPG",
-      "IMG_1407.JPG",
-      "IMG_1408.JPG",
-      "IMG_1409.JPG",
-      "IMG_1410.JPG",
-      "IMG_1412.JPG"
-    ];
-
     const masonryGrid = document.querySelector("#masonry-grid");
     const lightbox = document.querySelector("#lightbox");
     const lightboxViewport = document.querySelector("#lightbox-viewport");
@@ -504,18 +444,18 @@
     const zoomToggle = document.querySelector("#zoom-toggle");
     const sortToggle = document.querySelector("#sort-toggle");
     const sortMark = sortToggle.querySelector(".sort-toggle-mark");
+    const count = document.querySelector("#count");
+    let works = [];
     let isReversed = false;
     let isFullSize = false;
     let dragStart = null;
 
-    document.querySelector("#count").textContent = files.length;
-
-    function source(file) {
-      return `works-sharing/${file}`;
+    function source(work) {
+      return work.image;
     }
 
-    function label(file, index) {
-      return `作品 ${String(index + 1).padStart(2, "0")}`;
+    function label(work, index) {
+      return work.title || `作品 ${String(index + 1).padStart(2, "0")}`;
     }
 
     function setFullSize(nextIsFullSize) {
@@ -540,11 +480,11 @@
       setFullSize(!isFullSize);
     }
 
-    function openLightbox(file, index) {
-      lightboxImg.src = source(file);
-      lightboxImg.alt = label(file, index);
-      lightboxTitle.textContent = label(file, index);
-      lightbox.dataset.sourceFile = file;
+    function openLightbox(work, index) {
+      lightboxImg.src = source(work);
+      lightboxImg.alt = label(work, index);
+      lightboxTitle.textContent = label(work, index);
+      lightbox.dataset.sourceFile = work.image;
       lightbox.classList.add("is-open");
       resetViewMode();
       document.body.style.overflow = "hidden";
@@ -557,33 +497,46 @@
       document.body.style.overflow = "";
     }
 
-    function makeFigure(file, index) {
+    function makeFigure(work, index) {
       const figure = document.createElement("figure");
       figure.className = "shot";
       figure.tabIndex = 0;
       figure.innerHTML = `
-        <img loading="lazy" src="${source(file)}" alt="${label(file, index)}">
+        <img loading="lazy" src="${source(work)}" alt="${label(work, index)}">
         <figcaption>
-          <span>${label(file, index)}</span>
+          <span>${label(work, index)}</span>
         </figcaption>
       `;
-      figure.addEventListener("click", () => openLightbox(file, index));
+      figure.addEventListener("click", () => openLightbox(work, index));
       figure.addEventListener("keydown", (event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          openLightbox(file, index);
+          openLightbox(work, index);
         }
       });
       return figure;
     }
 
     function renderWorks() {
-      const orderedFiles = isReversed ? [...files].reverse() : files;
+      const orderedWorks = isReversed ? [...works].reverse() : works;
       masonryGrid.replaceChildren();
-      orderedFiles.forEach((file) => {
-        const originalIndex = files.indexOf(file);
-        masonryGrid.append(makeFigure(file, originalIndex));
+      orderedWorks.forEach((work) => {
+        const originalIndex = works.indexOf(work);
+        masonryGrid.append(makeFigure(work, originalIndex));
       });
+    }
+
+    async function loadWorks() {
+      try {
+        const response = await fetch("data/works.json");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        works = await response.json();
+        count.textContent = works.length;
+        renderWorks();
+      } catch (error) {
+        masonryGrid.textContent = "作品資料讀取失敗，請確認 data/works.json 是否存在，並使用本機伺服器開啟頁面。";
+        console.error(error);
+      }
     }
 
     function updateSortToggle() {
@@ -598,7 +551,7 @@
       renderWorks();
     });
 
-    renderWorks();
+    loadWorks();
 
     document.querySelector("#lightbox-close").addEventListener("click", closeLightbox);
     zoomToggle.addEventListener("click", toggleFullSize);
